@@ -1,0 +1,935 @@
+# Load required libraries
+library(shiny)
+library(tidyverse)
+library(neuralnet)
+library(NeuralNetTools)
+library(ggplot2)
+library(caret)
+library(shinydashboard)
+library(shinythemes)
+library(writexl)
+library(plotly)
+library(DT)
+library(viridis)
+library(corrplot)
+
+# Define UI with enhanced styling
+ui <- dashboardPage(
+    skin = "purple",
+    dashboardHeader(
+        title = tags$span(
+            icon("brain", style = "color: #ff6b6b;"), 
+            "NeuroPredictor Pro",
+            style = "font-weight: bold; font-size: 18px;"
+        ),
+        tags$li(class = "dropdown", 
+                style = "padding-top: 10px; padding-left: 15px; font-size: 14px; color: white;", 
+                HTML("🧠"))
+    ),
+    
+    dashboardSidebar(
+        width = 300,
+        tags$head(
+            tags$style(HTML("
+        .content-wrapper, .right-side { background-color: #f4f4f9; }
+        .skin-purple .main-header .navbar { background-color: #6c5ce7; }
+        .skin-purple .main-header .logo { background-color: #5a4fcf; }
+        .skin-purple .sidebar-menu > li.active > a { background-color: #6c5ce7; }
+        .box.box-primary { border-top-color: #6c5ce7; }
+        .btn-primary { background-color: #00b894; border-color: #00b894; }
+        .btn-primary:hover { background-color: #00a085; }
+        .progress-bar { background-color: #6c5ce7; }
+        .nav-tabs-custom > .nav-tabs > li.active { border-top-color: #6c5ce7; }
+      "))
+        ),
+        
+        sidebarMenu(
+            menuItem("🏠 Dashboard", tabName = "about", icon = icon("home")),
+            menuItem("📊 Analysis", tabName = "analysis", icon = icon("chart-line")),
+            menuItem("🎯 Feature Importance", tabName = "importance", icon = icon("bullseye")),
+            menuItem("⚙️ Model Tuning", tabName = "tuning", icon = icon("cogs")),
+            
+            br(),
+            div(style = "padding: 0 15px;",
+                h4("📁 Data Upload", style = "color: #FFFFFF; font-weight: bold;"),
+                fileInput("file", "Upload CSV File", 
+                          accept = c(".csv"),
+                          buttonLabel = "Browse...",
+                          placeholder = "No file selected"),
+                
+                conditionalPanel(
+                    condition = "output.fileUploaded",
+                    h4("🎯 Target & Features", style = "color: #FFFFFF; font-weight: bold;"),
+                    selectInput("target", "Target Variable", choices = NULL),
+                    selectInput("predictors", "Predictor Variables", choices = NULL, multiple = TRUE),
+                    
+                    h4("🏗️ Network Architecture", style = "color: #FFFFFF; font-weight: bold;"),
+                    sliderInput("hidden_layers", "Hidden Layers", value = 2, min = 1, max = 5, step = 1),
+                    uiOutput("neurons_ui"),
+                    
+                    selectInput("act_fct", "Activation Function", 
+                                choices = list(
+                                    "Logistic (Sigmoid)" = "logistic",
+                                    "Hyperbolic Tangent" = "tanh",
+                                    "Custom ReLU" = "relu",
+                                    "Custom Leaky ReLU" = "leaky_relu",
+                                    "Custom Swish" = "swish"
+                                ), selected = "tanh"),
+                    
+                    h4("🔧 Training Parameters", style = "color: #FFFFFF; font-weight: bold;"),
+                    sliderInput("learningrate", "Learning Rate", 
+                                value = 0.01, min = 0.001, max = 0.3, step = 0.001),
+                    sliderInput("stepmax", "Max Training Steps", 
+                                value = 10000, min = 1000, max = 50000, step = 1000),
+                    sliderInput("threshold", "Convergence Threshold", 
+                                value = 0.01, min = 0.001, max = 0.1, step = 0.001),
+                    
+                    selectInput("validation_split", "Train/Test Split", 
+                                choices = c("60:40", "70:30", "80:20", "90:10"), selected = "80:20"),
+                    sliderInput("repetitions", "Model Repetitions", 
+                                value = 3, min = 1, max = 10, step = 1),
+                    
+                    h4("🚀 Regularization", style = "color:#FFFFFF; font-weight: bold;"),
+                    checkboxInput("use_dropout", "Enable Dropout Simulation", value = FALSE),
+                    conditionalPanel(
+                        condition = "input.use_dropout",
+                        sliderInput("dropout_rate", "Dropout Rate", value = 0.2, min = 0.1, max = 0.5, step = 0.1)
+                    ),
+                    
+                    br(),
+                    actionButton("train", "🚀 Train Model", 
+                                 class = "btn-primary btn-lg", 
+                                 style = "width: 100%; font-weight: bold;"),
+                    br(), br(),
+                    downloadButton("download_results", "📥 Download Results", 
+                                   class = "btn-success", style = "width: 100%;")
+                )
+            )
+        )
+    ),
+    
+    dashboardBody(
+        tabItems(
+            tabItem(tabName = "about",
+                    fluidRow(
+                        box(
+                            title = tags$h3(icon("brain"), "NeuroPredictor Pro: Advanced AI-Powered Prediction Tool Based on Neural Networks "),
+                            width = 12, status = "primary", solidHeader = TRUE,
+                            div(style = "padding: 20px; line-height: 1.8;",
+                                tags$div(
+                                    style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                         color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;",
+                                    h4("🚀 Developed by: M. Iqbal Jeelani (SKUAST-Kashmir)", 
+                                       style = "margin-bottom: 10px;"),
+                                    p("Transform your data into actionable insights with cutting-edge neural network technology, delivering unmatched accuracy for continuous target variable prediction!")
+                                ),
+                                
+                                fluidRow(
+                                    column(6,
+                                           div(style = "background: #f8f9fa; padding: 15px; border-radius: 8px; height: 100%;",
+                                               h4("🎯 Key Features", style = "color: #2d3436;"),
+                                               tags$ul(style = "list-style-type: none; padding-left: 0;",
+                                                       tags$li(HTML("🔹 <strong>Advanced Architecture:</strong> Up to 5 hidden layers")),
+                                                       tags$li(HTML("🔹 <strong>Multiple Activations:</strong> Sigmoid, Tanh, ReLU, Leaky ReLU, Swish")),
+                                                       tags$li(HTML("🔹 <strong>Hyperparameter Tuning:</strong> Comprehensive parameter optimization")),
+                                                       tags$li(HTML("🔹 <strong>Feature Importance:</strong> Understand variable contributions")),
+                                                       tags$li(HTML("🔹 <strong>Interactive Visualizations:</strong> Dynamic plots and charts")),
+                                                       tags$li(HTML("🔹 <strong>Model Validation:</strong> Cross-validation and performance metrics"))
+                                               )
+                                           )
+                                    ),
+                                    column(6,
+                                           div(style = "background: #f8f9fa; padding: 15px; border-radius: 8px; height: 100%;",
+                                               h4("📊 Performance Metrics", style = "color: #2d3436;"),
+                                               tags$ul(style = "list-style-type: none; padding-left: 0;",
+                                                       tags$li(HTML("📈 <strong>R²:</strong> Coefficient of determination")),
+                                                       tags$li(HTML("📊 <strong>RMSE:</strong> Root mean square error")),
+                                                       tags$li(HTML("📉 <strong>MAE:</strong> Mean absolute error")),
+                                                       tags$li(HTML("📋 <strong>MAPE:</strong> Mean absolute percentage error")),
+                                                       tags$li(HTML("🎯 <strong>Custom Metrics:</strong> Domain-specific evaluations"))
+                                               )
+                                           )
+                                    )
+                                ),
+                                
+                                br(),
+                                div(style = "background: #e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db;",
+                                    h4("🔬 Perfect for:", style = "color: #2980b9; margin-bottom: 10px;"),
+                                    p(" Agricultural Sciences • Environmental Modeling •Forest Management • Business Analytics • Research & Development • Predictive Maintenance • Risk Assessment")
+                                ),
+                                
+                                br(),
+                                fluidRow(
+                                    column(6,
+                                           div(style = "text-align: center; padding: 15px;",
+                                               icon("envelope", style = "font-size: 24px; color: #e74c3c;"),
+                                               br(),
+                                               HTML("<strong>Contact:</strong><br><a href='mailto:imstat09@gmail.com' style='color: #3498db;'>imstat09@gmail.com</a>")
+                                           )
+                                    ),
+                                    column(6,
+                                           div(style = "text-align: center; padding: 15px;",
+                                               icon("youtube", style = "font-size: 24px; color: #e74c3c;"),
+                                               br(),
+                                               HTML("<strong>YouTube:</strong><br><a href='https://www.youtube.com/@Iqbalstat' target='_blank' style='color: #3498db;'>@Iqbalstat</a>")
+                                           )
+                                    )
+                                )
+                            )
+                        )
+                    ),
+                    
+                    fluidRow(
+                        conditionalPanel(
+                            condition = "output.fileUploaded",
+                            box(title = "📊 Data Overview", width = 6, status = "info", solidHeader = TRUE,
+                                verbatimTextOutput("data_summary")),
+                            box(title = "📈 Data Visualization", width = 6, status = "info", solidHeader = TRUE,
+                                plotlyOutput("data_correlation"))
+                        )
+                    )
+            ),
+            
+            tabItem(tabName = "analysis",
+                    fluidRow(
+                        box(title = "🧠 Neural Network Architecture", 
+                            status = "primary", solidHeader = TRUE, width = 6,
+                            plotOutput("nn_plot", height = "400px")),
+                        box(title = "📊 Training Progress", 
+                            status = "info", solidHeader = TRUE, width = 6,
+                            plotlyOutput("training_progress"))
+                    ),
+                    fluidRow(
+                        box(title = "🎯 Predicted vs Actual Values", 
+                            status = "success", solidHeader = TRUE, width = 8,
+                            plotlyOutput("comparison_plot")),
+                        box(title = "📈 Performance Metrics", 
+                            status = "warning", solidHeader = TRUE, width = 4,
+                            div(style = "padding: 10px;",
+                                uiOutput("performance_cards")))
+                    ),
+                    fluidRow(
+                        box(title = "📋 Prediction Results", 
+                            status = "primary", solidHeader = TRUE, width = 12,
+                            DT::dataTableOutput("prediction_table"))
+                    )
+            ),
+            
+            tabItem(tabName = "importance",
+                    fluidRow(
+                        box(title = "🎯 Feature Importance Analysis", 
+                            status = "primary", solidHeader = TRUE, width = 8,
+                            plotlyOutput("importance_plot")),
+                        box(title = "📊 Importance Scores", 
+                            status = "info", solidHeader = TRUE, width = 4,
+                            DT::dataTableOutput("importance_table"))
+                    ),
+                    fluidRow(
+                        box(title = "🔄 Sensitivity Analysis", 
+                            status = "success", solidHeader = TRUE, width = 12,
+                            plotlyOutput("sensitivity_plot"))
+                    )
+            ),
+            
+            tabItem(tabName = "tuning",
+                    fluidRow(
+                        box(title = "🎛️ Hyperparameter Optimization", 
+                            status = "primary", solidHeader = TRUE, width = 6,
+                            div(style = "padding: 15px;",
+                                h4("🔍 Grid Search Parameters"),
+                                checkboxGroupInput("tune_params", "Parameters to Tune:",
+                                                   choices = list(
+                                                       "Learning Rate" = "lr",
+                                                       "Hidden Neurons" = "neurons",
+                                                       "Activation Function" = "activation"
+                                                   ), selected = c("lr")),
+                                
+                                conditionalPanel(
+                                    condition = "input.tune_params.includes('lr')",
+                                    h5("Learning Rate Range:"),
+                                    sliderInput("lr_range", "", min = 0.001, max = 0.1, 
+                                                value = c(0.01, 0.05), step = 0.001)
+                                ),
+                                
+                                actionButton("start_tuning", "🚀 Start Hyperparameter Tuning", 
+                                             class = "btn-warning btn-lg", style = "width: 100%;")
+                            )),
+                        box(title = "📊 Tuning Results", 
+                            status = "info", solidHeader = TRUE, width = 6,
+                            DT::dataTableOutput("tuning_results"))
+                    ),
+                    fluidRow(
+                        box(title = "📈 Parameter Performance", 
+                            status = "success", solidHeader = TRUE, width = 12,
+                            plotlyOutput("tuning_plot"))
+                    )
+            )
+        )
+    )
+)
+
+# Enhanced server logic
+server <- function(input, output, session) {
+    
+    # Custom activation functions
+    relu <- function(x) { pmax(0, x) }
+    leaky_relu <- function(x) { ifelse(x > 0, x, 0.01 * x) }
+    swish <- function(x) { x / (1 + exp(-x)) }
+    
+    # Reactive data loading
+    data <- reactive({
+        req(input$file)
+        df <- read.csv(input$file$datapath, header = TRUE)
+        return(df)
+    })
+    
+    output$fileUploaded <- reactive({
+        return(!is.null(input$file))
+    })
+    outputOptions(output, "fileUploaded", suspendWhenHidden = FALSE)
+    
+    observeEvent(data(), {
+        numeric_cols <- names(data())[sapply(data(), is.numeric)]
+        updateSelectInput(session, "target", choices = numeric_cols)
+        updateSelectInput(session, "predictors", choices = numeric_cols)
+    })
+    
+    # Dynamic neurons UI
+    output$neurons_ui <- renderUI({
+        req(input$hidden_layers)
+        lapply(1:input$hidden_layers, function(i) {
+            sliderInput(paste0("neurons_", i), 
+                        paste("Layer", i, "Neurons"), 
+                        value = max(3, 10 - i*2), min = 2, max = 20, step = 1)
+        })
+    })
+    
+    # Data preprocessing
+    preprocess_data <- reactive({
+        req(data(), input$target, input$predictors)
+        cols_to_use <- c(input$target, input$predictors)
+        df <- data()[, cols_to_use, drop = FALSE]
+        df <- na.omit(df)
+        
+        if(nrow(df) < 10) {
+            showNotification("Insufficient data after cleaning (minimum 10 rows required)", type = "error")
+            return(NULL)
+        }
+        
+        if(!all(sapply(df, is.numeric))) {
+            showNotification("All selected columns must be numeric", type = "error")
+            return(NULL)
+        }
+        
+        # Store original ranges for denormalization
+        attr(df, "original_min") <- sapply(df, min)
+        attr(df, "original_max") <- sapply(df, max)
+        
+        # Normalize data
+        df_normalized <- df
+        for(col in names(df)) {
+            if(is.numeric(df[[col]])) {
+                range_val <- max(df[[col]]) - min(df[[col]])
+                if(range_val > 0) {
+                    df_normalized[[col]] <- (df[[col]] - min(df[[col]])) / range_val
+                } else {
+                    showNotification(paste("Column", col, "has zero variance"), type = "warning")
+                }
+            }
+        }
+        return(df_normalized)
+    })
+    
+    # Data summary
+    output$data_summary <- renderPrint({
+        req(data())
+        cat("Dataset Overview:\n")
+        cat("Rows:", nrow(data()), "\n")
+        cat("Columns:", ncol(data()), "\n\n")
+        cat("Numeric Variables:\n")
+        numeric_vars <- names(data())[sapply(data(), is.numeric)]
+        cat(paste(numeric_vars, collapse = ", "), "\n\n")
+        cat("Missing Values:\n")
+        print(colSums(is.na(data())))
+    })
+    
+    # Correlation plot
+    output$data_correlation <- renderPlotly({
+        req(data())
+        numeric_data <- data()[sapply(data(), is.numeric)]
+        if(ncol(numeric_data) > 1) {
+            cor_matrix <- cor(numeric_data, use = "complete.obs")
+            
+            p <- plot_ly(
+                z = cor_matrix,
+                type = "heatmap",
+                colorscale = "Viridis",
+                hovertemplate = "Correlation: %{z:.2f}<extra></extra>"
+            ) %>%
+                layout(title = "Feature Correlation Matrix",
+                       xaxis = list(title = "Variables"),
+                       yaxis = list(title = "Variables"))
+            return(p)
+        }
+    })
+    
+    # Denormalization function
+    denormalize <- function(normalized_val, feature_name, data) {
+        min_val <- attr(data, "original_min")[feature_name]
+        max_val <- attr(data, "original_max")[feature_name]
+        return(normalized_val * (max_val - min_val) + min_val)
+    }
+    
+    # Train-test split
+    train_test_split <- reactive({
+        req(preprocess_data())
+        set.seed(123)
+        split_ratio <- as.numeric(strsplit(input$validation_split, ":")[[1]]) / 100
+        sample_size <- floor(split_ratio[1] * nrow(preprocess_data()))
+        train_indices <- sample(seq_len(nrow(preprocess_data())), size = sample_size)
+        list(
+            trainset = preprocess_data()[train_indices, ],
+            testset = preprocess_data()[-train_indices, ]
+        )
+    })
+    
+    # Model storage
+    model_store <- reactiveVal(NULL)
+    predictions_store <- reactiveVal(NULL)
+    training_history <- reactiveVal(NULL)
+    
+    # Enhanced model training
+    observeEvent(input$train, {
+        req(train_test_split())
+        
+        showNotification("🚀 Initializing neural network training...", 
+                         type = "message", duration = NULL, id = "training")
+        
+        formula <- as.formula(paste(input$target, "~", paste(input$predictors, collapse = "+")))
+        
+        # Get hidden layer architecture
+        hidden_layers <- numeric(0)
+        for(i in 1:input$hidden_layers) {
+            if(!is.null(input[[paste0("neurons_", i)]])) {
+                hidden_layers <- c(hidden_layers, input[[paste0("neurons_", i)]])
+            }
+        }
+        if(length(hidden_layers) == 0) hidden_layers <- c(5)
+        
+        # Select activation function
+        act_function <- switch(input$act_fct,
+                               "relu" = relu,
+                               "leaky_relu" = leaky_relu,
+                               "swish" = swish,
+                               input$act_fct)
+        
+        # Train model with error handling
+        model <- tryCatch({
+            nn <- neuralnet(
+                formula,
+                data = train_test_split()$trainset,
+                hidden = hidden_layers,
+                rep = as.numeric(input$repetitions),
+                act.fct = act_function,
+                err.fct = "sse",
+                linear.output = TRUE,
+                lifesign = "minimal",
+                stepmax = as.numeric(input$stepmax),
+                threshold = as.numeric(input$threshold),
+                learningrate = as.numeric(input$learningrate)
+            )
+            
+            removeNotification(id = "training")
+            showNotification("✅ Training completed successfully!", 
+                             type = "message", duration = 3)
+            nn
+        }, error = function(e) {
+            removeNotification(id = "training")
+            showNotification(paste("❌ Training error:", e$message), 
+                             type = "error", duration = 5)
+            NULL
+        })
+        
+        model_store(model)
+        
+        # Generate predictions and calculate metrics
+        if(!is.null(model)) {
+            test_data <- train_test_split()$testset
+            pred_normalized <- predict(model, test_data)
+            
+            results <- data.frame(
+                Actual_Normalized = test_data[[input$target]],
+                Predicted_Normalized = as.numeric(pred_normalized)
+            )
+            
+            # Denormalize results
+            if(!is.null(attr(preprocess_data(), "original_min"))) {
+                results$Actual <- denormalize(results$Actual_Normalized, input$target, preprocess_data())
+                results$Predicted <- denormalize(results$Predicted_Normalized, input$target, preprocess_data())
+            } else {
+                results$Actual <- results$Actual_Normalized
+                results$Predicted <- results$Predicted_Normalized
+            }
+            
+            predictions_store(results)
+            
+            # Store training history for visualization
+            if(!is.null(model$result.matrix)) {
+                history <- data.frame(
+                    Repetition = 1:ncol(model$result.matrix),
+                    Error = as.numeric(model$result.matrix["error", ]),
+                    Steps = as.numeric(model$result.matrix["steps", ])
+                )
+                training_history(history)
+            }
+        }
+    })
+    
+    # Neural network plot
+output$nn_plot <- renderPlot({
+  req(model_store())
+  tryCatch({
+    # Determine the best repetition with minimum error
+    best_rep <- which.min(model_store()$result.matrix["error", ])
+    
+    # Set plot margins (adjusted top margin for consistency, can be reduced if not needed)
+    par(mar = c(4, 4, 4, 2) + 0.1)  # Reset top margin to 4 since title is removed
+    
+    # Generate the neural network plot without the label
+    plot(model_store(), rep = best_rep, 
+         col.hidden = "lightblue", col.hidden.synapse = "blue",
+         col.out = "black", col.out.synapse = "black",
+         show.weights = FALSE, information = FALSE)
+    
+  }, error = function(e) {
+    plot(1, type = "n", main = "Network visualization unavailable", 
+         xlab = "", ylab = "", axes = FALSE)
+    text(1, 1, "Please train a model first", cex = 1.2)
+  })
+})
+    
+    # Training progress plot
+    output$training_progress <- renderPlotly({
+        req(training_history())
+        history <- training_history()
+        
+        p <- plot_ly(history, x = ~Repetition, y = ~Error, type = 'scatter', mode = 'lines+markers',
+                     line = list(color = '#6c5ce7', width = 3),
+                     marker = list(color = '#ff6b6b', size = 8)) %>%
+            layout(title = "Training Progress",
+                   xaxis = list(title = "Repetition"),
+                   yaxis = list(title = "Error"),
+                   hovermode = "x unified")
+        return(p)
+    })
+    
+    # Enhanced comparison plot
+    output$comparison_plot <- renderPlotly({
+        req(predictions_store())
+        results <- predictions_store()
+        
+        # Calculate R²
+        r2 <- cor(results$Actual, results$Predicted)^2
+        
+        p <- plot_ly(results, x = ~Actual, y = ~Predicted, type = 'scatter', mode = 'markers',
+                     marker = list(color = '#74b9ff', size = 8, opacity = 0.7),
+                     hovertemplate = "Actual: %{x:.2f}<br>Predicted: %{y:.2f}<extra></extra>") %>%
+            add_trace(x = range(results$Actual), y = range(results$Actual),
+                      type = 'scatter', mode = 'lines',
+                      line = list(color = '#e17055', width = 3, dash = 'dash'),
+                      name = 'Perfect Prediction',
+                      hovertemplate = "Perfect Line<extra></extra>") %>%
+            layout(title = paste("Prediction Accuracy (R² =", round(r2, 3), ")"),
+                   xaxis = list(title = paste("Actual", input$target)),
+                   yaxis = list(title = paste("Predicted", input$target)),
+                   showlegend = TRUE)
+        return(p)
+    })
+    
+    # Performance metrics cards
+    output$performance_cards <- renderUI({
+        req(predictions_store())
+        results <- predictions_store()
+        actual <- results$Actual
+        predicted <- results$Predicted
+        
+        r2 <- cor(predicted, actual)^2
+        rmse <- sqrt(mean((predicted - actual)^2))
+        mae <- mean(abs(predicted - actual))
+        mape <- mean(abs((actual - predicted) / actual)) * 100
+        
+        tagList(
+            div(class = "info-box bg-aqua",
+                div(class = "info-box-icon", icon("bullseye")),
+                div(class = "info-box-content",
+                    span(class = "info-box-text", "R²"),
+                    span(class = "info-box-number", round(r2, 4)))),
+            
+            div(class = "info-box bg-yellow",
+                div(class = "info-box-icon", icon("exclamation-triangle")),
+                div(class = "info-box-content",
+                    span(class = "info-box-text", "RMSE"),
+                    span(class = "info-box-number", round(rmse, 4)))),
+            
+            div(class = "info-box bg-green",
+                div(class = "info-box-icon", icon("chart-line")),
+                div(class = "info-box-content",
+                    span(class = "info-box-text", "MAE"),
+                    span(class = "info-box-number", round(mae, 4)))),
+            
+            div(class = "info-box bg-red",
+                div(class = "info-box-icon", icon("percent")),
+                div(class = "info-box-content",
+                    span(class = "info-box-text", "MAPE %"),
+                    span(class = "info-box-number", round(mape, 2))))
+        )
+    })
+    
+    # Prediction results table
+    output$prediction_table <- DT::renderDataTable({
+        req(predictions_store())
+        results <- predictions_store()
+        
+        DT::datatable(
+            results[, c("Actual", "Predicted")],
+            options = list(
+                pageLength = 10,
+                scrollX = TRUE,
+                dom = 'Bfrtip',
+                buttons = c('copy', 'csv', 'excel')
+            ),
+            extensions = 'Buttons'
+        ) %>%
+            formatRound(columns = c("Actual", "Predicted"), digits = 4)
+    })
+    
+    # Feature importance analysis
+    calculate_importance <- reactive({
+        req(model_store(), input$predictors)
+        
+        model <- model_store()
+        if(is.null(model$weights)) return(NULL)
+        
+        input_weights <- abs(model$weights[[1]][[1]])
+        
+        if(is.matrix(input_weights)) {
+            importance_scores <- rowMeans(input_weights[-nrow(input_weights), ])
+            names(importance_scores) <- input$predictors
+        } else {
+            importance_scores <- abs(input_weights[-length(input_weights)])
+            names(importance_scores) <- input$predictors
+        }
+        
+        importance_scores <- (importance_scores / sum(importance_scores)) * 100
+        
+        data.frame(
+            Variable = names(importance_scores),
+            Importance = as.numeric(importance_scores),
+            stringsAsFactors = FALSE
+        ) %>%
+            arrange(desc(Importance))
+    })
+    
+    # Feature importance plot
+    output$importance_plot <- renderPlotly({
+        req(calculate_importance())
+        importance_data <- calculate_importance()
+        
+        p <- plot_ly(importance_data, x = ~reorder(Variable, Importance), y = ~Importance,
+                     type = 'bar', marker = list(color = ~Importance, colorscale = 'Viridis')) %>%
+            layout(title = "Feature Importance Analysis",
+                   xaxis = list(title = "Variables"),
+                   yaxis = list(title = "Importance (%)"),
+                   showlegend = FALSE) %>%
+            layout(xaxis = list(categoryorder = "total ascending"))
+        
+        return(p)
+    })
+    
+    # Feature importance table
+    output$importance_table <- DT::renderDataTable({
+        req(calculate_importance())
+        importance_data <- calculate_importance()
+        
+        DT::datatable(
+            importance_data,
+            options = list(pageLength = 10, dom = 't'),
+            rownames = FALSE
+        ) %>%
+            formatRound(columns = "Importance", digits = 2) %>%
+            formatStyle("Importance",
+                        background = styleColorBar(importance_data$Importance, '#74b9ff'),
+                        backgroundSize = '100% 90%',
+                        backgroundRepeat = 'no-repeat',
+                        backgroundPosition = 'center')
+    })
+    
+    # Sensitivity analysis
+    output$sensitivity_plot <- renderPlotly({
+        req(model_store(), preprocess_data(), input$predictors)
+        
+        model <- model_store()
+        base_data <- train_test_split()$testset[1, ]
+        
+        sensitivity_results <- data.frame()
+        
+        for(var in input$predictors) {
+            for(change in c(-0.1, -0.05, 0, 0.05, 0.1)) {
+                test_data <- base_data
+                original_value <- test_data[[var]]
+                test_data[[var]] <- original_value * (1 + change)
+                
+                pred <- predict(model, test_data)
+                
+                sensitivity_results <- rbind(sensitivity_results, data.frame(
+                    Variable = var,
+                    Change = change * 100,
+                    Prediction = as.numeric(pred)
+                ))
+            }
+        }
+        
+        p <- plot_ly(sensitivity_results, x = ~Change, y = ~Prediction, color = ~Variable,
+                     type = 'scatter', mode = 'lines+markers') %>%
+            layout(title = "Sensitivity Analysis - How Input Changes Affect Predictions",
+                   xaxis = list(title = "Input Change (%)"),
+                   yaxis = list(title = "Predicted Output"))
+        
+        return(p)
+    })
+    
+    # Hyperparameter tuning storage
+    tuning_results_store <- reactiveVal(NULL)
+    
+    # Hyperparameter tuning
+    observeEvent(input$start_tuning, {
+        req(train_test_split(), input$tune_params)
+        
+        withProgress(message = 'Tuning hyperparameters', value = 0, {
+            showNotification("🔍 Starting hyperparameter optimization...", 
+                             type = "message", duration = NULL, id = "tuning")
+            
+            param_grid <- list()
+            
+            if("lr" %in% input$tune_params) {
+                param_grid$learning_rate <- seq(input$lr_range[1], input$lr_range[2], length.out = 5)
+            } else {
+                param_grid$learning_rate <- c(input$learningrate)
+            }
+            
+            if("neurons" %in% input$tune_params) {
+                param_grid$neurons <- list(c(3), c(5), c(8), c(5,3), c(8,5))
+            } else {
+                hidden_layers <- numeric(0)
+                for(i in 1:input$hidden_layers) {
+                    if(!is.null(input[[paste0("neurons_", i)]])) {
+                        hidden_layers <- c(hidden_layers, input[[paste0("neurons_", i)]])
+                    }
+                }
+                param_grid$neurons <- list(hidden_layers)
+            }
+            
+            if("activation" %in% input$tune_params) {
+                param_grid$activation <- c("logistic", "tanh")
+            } else {
+                param_grid$activation <- c(input$act_fct)
+            }
+            
+            results <- data.frame()
+            formula <- as.formula(paste(input$target, "~", paste(input$predictors, collapse = "+")))
+            
+            total_combinations <- length(param_grid$learning_rate) * 
+                length(param_grid$neurons) * 
+                length(param_grid$activation)
+            
+            combination_count <- 0
+            
+            for(lr in param_grid$learning_rate) {
+                for(neurons in param_grid$neurons) {
+                    for(act_func in param_grid$activation) {
+                        combination_count <- combination_count + 1
+                        incProgress(1/total_combinations, detail = paste("Combination", combination_count))
+                        
+                        tryCatch({
+                            nn <- neuralnet(
+                                formula,
+                                data = train_test_split()$trainset,
+                                hidden = neurons,
+                                rep = 1,
+                                act.fct = act_func,
+                                err.fct = "sse",
+                                linear.output = TRUE,
+                                lifesign = "none",
+                                stepmax = 5000,
+                                threshold = input$threshold,
+                                learningrate = lr
+                            )
+                            
+                            pred <- predict(nn, train_test_split()$testset)
+                            actual <- train_test_split()$testset[[input$target]]
+                            
+                            rmse <- sqrt(mean((pred - actual)^2))
+                            r2 <- cor(pred, actual)^2
+                            
+                            results <- rbind(results, data.frame(
+                                Learning_Rate = lr,
+                                Hidden_Layers = paste(neurons, collapse = "-"),
+                                Activation = act_func,
+                                RMSE = rmse,
+                                R2 = r2,
+                                stringsAsFactors = FALSE
+                            ))
+                            
+                        }, error = function(e) {
+                            # Skip failed combinations
+                        })
+                        
+                        showNotification(
+                            paste("🔍 Tuning progress:", round((combination_count / total_combinations) * 100, 1), "%"), 
+                            type = "message", duration = 1, id = "tuning_progress"
+                        )
+                    }
+                }
+            }
+            
+            removeNotification(id = "tuning")
+            removeNotification(id = "tuning_progress")
+            
+            if(nrow(results) > 0) {
+                results <- results[order(-results$R2), ]
+                tuning_results_store(results)
+                showNotification("✅ Hyperparameter tuning completed!", 
+                                 type = "message", duration = 3)
+            } else {
+                showNotification("❌ No successful parameter combinations found", 
+                                 type = "error", duration = 5)
+            }
+        })
+    })
+    
+    # Tuning results table
+    output$tuning_results <- DT::renderDataTable({
+        req(tuning_results_store())
+        results <- tuning_results_store()
+        
+        DT::datatable(
+            results,
+            options = list(
+                pageLength = 10,
+                scrollX = TRUE,
+                order = list(list(4, 'desc'))
+            ),
+            rownames = FALSE
+        ) %>%
+            formatRound(columns = c("Learning_Rate", "RMSE", "R2"), digits = 4) %>%
+            formatStyle("R2",
+                        background = styleColorBar(results$R2, '#00b894'),
+                        backgroundSize = '100% 90%',
+                        backgroundRepeat = 'no-repeat',
+                        backgroundPosition = 'center')
+    })
+    
+    # Tuning visualization
+    output$tuning_plot <- renderPlotly({
+        req(tuning_results_store())
+        results <- tuning_results_store()
+        
+        tryCatch({
+            if("lr" %in% input$tune_params && nrow(results) > 1) {
+                n_colors <- length(unique(results$Activation))
+                colors <- if(n_colors >= 3) {
+                    RColorBrewer::brewer.pal(min(n_colors, 8), "Set2")
+                } else {
+                    c("#1f77b4", "#ff7f0e")[1:n_colors]
+                }
+                
+                p <- plot_ly(results, x = ~Learning_Rate, y = ~R2, 
+                             color = ~Activation, 
+                             colors = colors,
+                             size = ~pmax(1/RMSE, 0.01),
+                             type = 'scatter', mode = 'markers',
+                             marker = list(line = list(width = 1)),
+                             hovertemplate = "Learning Rate: %{x}<br>R²: %{y:.4f}<br>Activation: %{color}<extra></extra>") %>%
+                    layout(title = "Hyperparameter Performance Comparison",
+                           xaxis = list(title = "Learning Rate", type = "log"),
+                           yaxis = list(title = "R² Score"))
+                return(p)
+            } else {
+                p <- plot_ly(results, x = ~seq_len(nrow(results)), y = ~R2,
+                             type = 'bar', 
+                             marker = list(color = ~R2, colorscale = 'Viridis'),
+                             hovertemplate = "Configuration %{x}<br>R²: %{y:.4f}<extra></extra>") %>%
+                    layout(title = "Parameter Configuration Performance",
+                           xaxis = list(title = "Configuration Rank"),
+                           yaxis = list(title = "R² Score"),
+                           showlegend = FALSE)
+                return(p)
+            }
+        }, error = function(e) {
+            showNotification(paste("Error in tuning plot:", e$message), type = "error")
+            return(NULL)
+        })
+    })
+    
+    # Download handler for enhanced results
+    output$download_results <- downloadHandler(
+        filename = function() {
+            paste("neuro_predictor_results_", Sys.Date(), ".xlsx", sep = "")
+        },
+        content = function(file) {
+            req(predictions_store())
+            
+            sheets_list <- list()
+            
+            results <- predictions_store()
+            sheets_list[["Predictions"]] <- results[, c("Actual", "Predicted")]
+            
+            if(!is.null(predictions_store())) {
+                actual <- results$Actual
+                predicted <- results$Predicted
+                
+                metrics_df <- data.frame(
+                    Metric = c("R²", "RMSE", "MAE", "MAPE"),
+                    Value = c(
+                        cor(predicted, actual)^2,
+                        sqrt(mean((predicted - actual)^2)),
+                        mean(abs(predicted - actual)),
+                        mean(abs((actual - predicted) / actual)) * 100
+                    )
+                )
+                sheets_list[["Performance_Metrics"]] <- metrics_df
+            }
+            
+            if(!is.null(calculate_importance())) {
+                sheets_list[["Feature_Importance"]] <- calculate_importance()
+            }
+            
+            if(!is.null(tuning_results_store())) {
+                sheets_list[["Hyperparameter_Tuning"]] <- tuning_results_store()
+            }
+            
+            config_df <- data.frame(
+                Parameter = c("Target Variable", "Predictor Variables", "Hidden Layers", 
+                              "Activation Function", "Learning Rate", "Max Steps", 
+                              "Threshold", "Train/Test Split", "Repetitions"),
+                Value = c(
+                    input$target,
+                    paste(input$predictors, collapse = ", "),
+                    paste(sapply(1:input$hidden_layers, function(i) input[[paste0("neurons_", i)]]), collapse = "-"),
+                    input$act_fct,
+                    input$learningrate,
+                    input$stepmax,
+                    input$threshold,
+                    input$validation_split,
+                    input$repetitions
+                )
+            )
+            sheets_list[["Model_Configuration"]] <- config_df
+            
+            write_xlsx(sheets_list, path = file)
+        }
+    )
+}
+
+# Launch the app
+shinyApp(ui = ui, server = server)
